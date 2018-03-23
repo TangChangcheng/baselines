@@ -1,8 +1,7 @@
-import numpy as np
-import gym
 from gym import spaces
 from copy import deepcopy
 from gym.core import Env
+from baselines.ppo1.hyperparams import *
 
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
@@ -11,10 +10,10 @@ interval = 0.05
 status = np.arange(-3, 3, interval)
 actions = np.arange(-6, 6, interval)
 
-obs = 'grad'
 
 class Convex(Env):
-    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10):
+    id = 'Convex'
+    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10, params_mean=0, params_std=1, status_mean=0, status_std=1.):
         super(Convex, self).__init__()
         
         self.action_shape = (nb_status, )
@@ -22,6 +21,11 @@ class Convex(Env):
         self.action = self.action_space.sample()
 
         self.H = H
+
+        self.params_mean = params_mean
+        self.params_std = params_std
+        self.status_mean = status_mean
+        self.status_std = status_std
 
         self.coefs = np.ones(self.action_shape * 2)
         self.bias = np.zeros(self.action_shape)
@@ -41,10 +45,6 @@ class Convex(Env):
         self.reward_range = (-np.inf, 0)
 
         if params is None:
-            self.coefs = np.random.uniform(-2, 2, size=np.shape(self.coefs))
-            # self.coefs /= self.coefs.sum(axis=0)
-            self.bias = np.zeros_like(self.bias)
-            # self.bias = np.random.uniform(0.1, 5, size=np.shape(self.bias))
             self.is_params_setted = False
         else:
             self.coefs = np.array(params[0])
@@ -64,13 +64,12 @@ class Convex(Env):
         else:
             shapes = [shape_status]
         
-        if params is None:
+        if observe_params:
             shapes.extend([shape_w, shape_bias])
 
         self.observation_space = spaces.Box(-10, 10, shape=(sum(shapes), ))
 
         if status is None:
-            self.status = np.random.normal(loc=0, scale=3., size=self.action_shape)
             self.is_status_setted = False
         else:
             self.status = np.array(status)
@@ -81,33 +80,34 @@ class Convex(Env):
 
     def foo(self, x):
         coefs = self.coefs
-        # y = np.log(np.sum(np.power(np.matmul(coefs, x) - self.bias, 2)) + np.e)
         y = np.sum(np.power(np.matmul(coefs, x) - self.bias, 2))
+        if ln:
+            y = np.log(y + np.e)
         return y
 
     def get_loss(self):
         return self.foo(self.status)
 
     def gradient(self, x):
-        return 2 * np.matmul(np.transpose(self.coefs), (np.matmul(self.coefs, x) - self.bias)) #/ \
-               # (np.sum(np.power(np.matmul(self.coefs, x) - self.bias, 2)) + np.e)
+        grad = 2 * np.matmul(np.transpose(self.coefs), (np.matmul(self.coefs, x) - self.bias))
+        if ln:
+            grad = grad / (np.sum(np.power(np.matmul(self.coefs, x) - self.bias, 2)) + np.e)
+        return grad
 
     def reset(self, status=None):
         # print('\n--------------------------------------------------------------------------------')
         # self.coefs = np.random.uniform(0, 1, self.coefs.shape)
 
         if status is None and not self.is_status_setted:
-            self.status = np.random.normal(loc=0, scale=3., size=self.action_shape)
+            self.status = random_fn(self.status_mean, self.status_std, size=self.action_shape)
         elif status is not None:
             self.status = np.array(status)
         elif self.is_status_setted:
             self.status = deepcopy(self.setted_status)
 
         if not self.is_params_setted:
-            self.coefs = np.random.uniform(-2, 2, size=np.shape(self.coefs))
-            # self.coefs /= self.coefs.sum(axis=0)
-            # self.bias = np.random.uniform(0.1, 5, size=np.shape(self.bias))
-        # self.coefs[0] = np.random.uniform(0.1, 10)
+            self.coefs = random_fn(self.params_mean, self.params_std, size=np.shape(self.coefs))
+            self.bias = random_fn(self.params_mean, self.params_std, size=np.shape(self.bias))
         self.init_status = deepcopy(self.status)
         self.loss = np.sum(self.foo(self.status))
         self.init_loss = deepcopy(self.loss)
@@ -141,11 +141,11 @@ class Convex(Env):
         if obs == 'grad':
             res.append(self.observe_grad(current_loss))
         elif obs == 'grad_val':
-            res.append(self.observe_val(current_loss))
+            res.extend([self.observe_val(current_loss), self.observe_grad(current_loss)])
         else:
             res.append(self.status)
         
-        if not self.is_params_setted:
+        if observe_params:
             res.extend([self.coefs.flatten(), self.bias])
         
         return np.concatenate(res)
@@ -210,6 +210,10 @@ class Convex(Env):
         info = {}
 
         self.losses.append(self.loss)
+        
+        if reward_normalize:
+            self.reward /= self.init_loss
+        
         return observation, self.reward, done, info
 
     def render(self, mode='human', close=False):

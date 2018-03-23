@@ -1,13 +1,13 @@
 from baselines.common import Dataset, explained_variance, fmt_row, zipsame
 from baselines import logger
 import baselines.common.tf_util as U
-import tensorflow as tf, numpy as np
+import tensorflow as tf
 import time
 from baselines.common.mpi_adam import MpiAdam
 from baselines.common.mpi_moments import mpi_moments
 from mpi4py import MPI
 from collections import deque
-from baselines.hyperparams import *
+from baselines.ppo1.hyperparams import *
 
 def traj_segment_generator(pi, env, horizon, stochastic):
     t = 0
@@ -23,6 +23,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
     # Initialize history arrays
     obs = np.array([ob for _ in range(horizon)])
     rews = np.zeros(horizon, 'float32')
+    vtrue = np.zeros(horizon, 'float32')
     vpreds = np.zeros(horizon, 'float32')
     news = np.zeros(horizon, 'int32')
     acs = np.array([ac for _ in range(horizon)])
@@ -37,7 +38,7 @@ def traj_segment_generator(pi, env, horizon, stochastic):
         if t > 0 and t % horizon == 0:
             yield {"ob" : obs, "rew" : rews, "vpred" : vpreds, "new" : news,
                     "ac" : acs, "prevac" : prevacs, "nextvpred": vpred * (1 - new),
-                    "ep_rets" : ep_rets, "ep_lens" : ep_lens}
+                    "ep_rets" : ep_rets, "ep_lens" : ep_lens, 'vtrue': vtrue}
             # Be careful!!! if you change the downstream algorithm to aggregate
             # several of these batches, then be sure to do a deepcopy
             ep_rets = []
@@ -51,6 +52,8 @@ def traj_segment_generator(pi, env, horizon, stochastic):
 
         ob, rew, new, _ = env.step(ac)
         rews[i] = rew
+        
+        vtrue[i] = -rew * env.init_loss
 
         cur_ep_ret += rew
         cur_ep_len += 1

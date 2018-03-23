@@ -7,7 +7,7 @@ import os
 import gym
 from baselines.common.distributions import make_pdtype
 
-from baselines.hyperparams import *
+from baselines.ppo1.hyperparams import *
 
 class MlpPolicy(object):
     recurrent = False
@@ -19,7 +19,7 @@ class MlpPolicy(object):
         if 'load' in kwargs and kwargs['load']:
           self.load(model_dir)
 
-    def _init(self, ob_space, ac_space, hid_size, num_hid_layers, gaussian_fixed_var=True, activation='relu'):
+    def _init(self, ob_space, ac_space, hid_size, num_hid_layers, gaussian_fixed_var=True, activation='relu', **kwargs):
         assert isinstance(ob_space, gym.spaces.Box)
 
         self.pdtype = pdtype = make_pdtype(ac_space)
@@ -76,13 +76,13 @@ class MlpPolicy(object):
     def save(self, dir):
       # name = self.scope
       # os.makedirs('{dir}/{name}'.format(dir=dir, name=name),exist_ok=True)
-      self.saver.save(tf.get_default_session(), '{dir}/model.ckpt'.format(dir=dir), global_step=self.step)
+      self.saver.save(tf.get_default_session(), os.path.join(dir, env_id, 'model.ckpt'), global_step=self.step)
       print('save model successful.')
 
     def load(self, dir):
         # name = self.scope
         try:
-          checkpoint = tf.train.latest_checkpoint(os.path.join(dir))
+          checkpoint = tf.train.latest_checkpoint(os.path.join(dir, env_id))
           self.saver.restore(tf.get_default_session(), checkpoint)
           self.step = int(re.findall(r'\d+', checkpoint)[0])
           print('load model successful.')
