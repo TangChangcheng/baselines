@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 import matplotlib.pyplot as plt
 import importlib
+import sys
 
 from baselines.common.cmd_util import mujoco_arg_parser
 from baselines.common import tf_util as U
 from baselines import logger
 from baselines.bench.monitor import Monitor
 
-from baselines.ppo1.hyperparams import *
+from baselines.hyperparams import *
 
 from baselines.ppo1 import mlp_policy, pposgd_simple
-from baselines.ppo1.Convex import Convex
+import os
 
-from baselines.results_plotter import main as result_plotter
-
-
-
-
+# path = os.path.abspath(__file__).split('/')[:-2]
+# sys.path.append(os.path.join(*path, 'Environments'))
+EnvModule = importlib.import_module(env_id)
+# exec('from ..Environments import {module}'.format(module=env_id))
+env = getattr(EnvModule, env_id)(**env_config)
 U.make_session(num_cpu=1).__enter__()
 def policy_fn(name, ob_space, ac_space):
   return mlp_policy.MlpPolicy(name=name, ob_space=ob_space, ac_space=ac_space,
@@ -67,7 +68,7 @@ def test(env, epochs=5):
 
 def main():
     args = mujoco_arg_parser().parse_args()
-    logger.configure(dir='log', format_strs=['csv', 'stdout'])
+    logger.configure(dir='log', format_strs=['stdout'])
     train(env, num_timesteps=args.num_timesteps, seed=args.seed)
     
 

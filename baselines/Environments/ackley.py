@@ -1,7 +1,7 @@
 from gym import spaces
 from copy import deepcopy
 from gym.core import Env
-from baselines.ppo1.hyperparams import *
+from baselines.hyperparams import *
 
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
@@ -11,12 +11,12 @@ status = np.arange(-3, 3, interval)
 actions = np.arange(-6, 6, interval)
 
 
-class Convex(Env):
+class ackley(Env):
     id = 'Convex'
-    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10, params_mean=0, params_std=1, status_mean=0, status_std=1.):
-        super(Convex, self).__init__()
+    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10, nb_group=100, params_mean=0, params_std=1, status_mean=0, status_std=1.):
+        super(ackley, self).__init__()
         
-        self.action_shape = (nb_status, )
+        self.action_shape = (nb_group, nb_status, )
         self.action_space = spaces.Box(-1., 1., shape=self.action_shape)
         self.action = self.action_space.sample()
 
@@ -27,16 +27,14 @@ class Convex(Env):
         self.status_mean = status_mean
         self.status_std = status_std
 
-        self.coefs = np.ones(self.action_shape * 2)
-        self.bias = np.zeros(self.action_shape)
+        self.coefs = np.ones((nb_status, ) * 2)
+        self.bias = np.zeros((nb_status, ))
 
         self._seed = 0
 
         self.reward = 0
         self.last_reward = 0
         self.nb_plot = 0
-        self.is_training = True
-        self.is_ploting = False
         self.plt = plt
         self.plot_row = 1
         self.plot_col = 1
@@ -47,8 +45,7 @@ class Convex(Env):
         if params is None:
             self.is_params_setted = False
         else:
-            self.coefs = np.array(params[0])
-            self.bias = np.array(params[1])
+            self.coefs = np.array(params)
             self.is_params_setted = True
 
         shape_status = nb_status
@@ -79,20 +76,15 @@ class Convex(Env):
         self.reset()
 
     def foo(self, x):
-        coefs = self.coefs
-        y = np.sum(np.power(np.matmul(coefs, x) - self.bias, 2))
-        if ln:
-            y = np.log(y + np.e)
+        coef = self.coefs
+        y = -20 * np.exp(-0.2 * np.sqrt(np.sum(np.power(np.matmul(coef, x), 2), axis=-1))) - np.exp(
+            np.sum(np.cos(2 * np.pi * (np.matmul(coef, x))) * coef[2], axis=-1)) + 20 + np.e
+        # y = np.log(np.sum(np.power(coefs * x + self.bias, 2)) + 10)
         return y
 
     def get_loss(self):
         return self.foo(self.status)
 
-    def gradient(self, x):
-        grad = 2 * np.matmul(np.transpose(self.coefs), (np.matmul(self.coefs, x) - self.bias))
-        if ln:
-            grad = grad / (np.sum(np.power(np.matmul(self.coefs, x) - self.bias, 2)) + np.e)
-        return grad
 
     def reset(self, status=None):
         # print('\n--------------------------------------------------------------------------------')
@@ -121,13 +113,8 @@ class Convex(Env):
         }
 
         self.history_observation['gradient'][-1] = self.gradient(self.status)
-
-        if self.is_ploting:
-            self.i = 0
-            self.nb_plot += 1
-            self.fig = plt.figure(0)
-            self.ax = self.fig.add_subplot(self.plot_row, self.plot_col, self.nb_plot)
-            plt.ion()
+        
+        self.info = {'vtrue': []}
 
         # print('init_loss = ', self.loss)
         return self.observe(self.loss)
@@ -207,14 +194,13 @@ class Convex(Env):
             done = self.nb_step >= self.max_steps
         else:
             done = self.loss > 1000 or self.nb_step >= self.max_steps
-        info = {}
-
-        self.losses.append(self.loss)
+        
+        self.info['vtrue'].append(self.loss)
         
         if reward_normalize:
             self.reward /= self.init_loss
         
-        return observation, self.reward, done, info
+        return observation, self.reward, done, self.info
 
     def render(self, mode='human', close=False):
         # print('\ninit: ', self.init_status)

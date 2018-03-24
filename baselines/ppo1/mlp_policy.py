@@ -7,7 +7,7 @@ import os
 import gym
 from baselines.common.distributions import make_pdtype
 
-from baselines.ppo1.hyperparams import *
+from baselines.hyperparams import *
 
 class MlpPolicy(object):
     recurrent = False

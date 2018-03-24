@@ -1,7 +1,7 @@
 from gym import spaces
 from copy import deepcopy
 from gym.core import Env
-from baselines.ppo1.hyperparams import *
+from baselines.hyperparams import *
 
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
@@ -121,13 +121,8 @@ class Convex(Env):
         }
 
         self.history_observation['gradient'][-1] = self.gradient(self.status)
-
-        if self.is_ploting:
-            self.i = 0
-            self.nb_plot += 1
-            self.fig = plt.figure(0)
-            self.ax = self.fig.add_subplot(self.plot_row, self.plot_col, self.nb_plot)
-            plt.ion()
+        
+        self.info = {'vtrue': []}
 
         # print('init_loss = ', self.loss)
         return self.observe(self.loss)
@@ -207,14 +202,13 @@ class Convex(Env):
             done = self.nb_step >= self.max_steps
         else:
             done = self.loss > 1000 or self.nb_step >= self.max_steps
-        info = {}
-
-        self.losses.append(self.loss)
+        
+        self.info['vtrue'].append(self.loss)
         
         if reward_normalize:
             self.reward /= self.init_loss
         
-        return observation, self.reward, done, info
+        return observation, self.reward, done, self.info
 
     def render(self, mode='human', close=False):
         # print('\ninit: ', self.init_status)

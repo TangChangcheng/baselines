@@ -1,6 +1,7 @@
 import os
 import time
-import joblib
+import re
+import sys
 import numpy as np
 import os.path as osp
 import tensorflow as tf
@@ -8,8 +9,10 @@ from baselines import logger
 from collections import deque
 from baselines.common import explained_variance
 
+from baselines.hyperparams import env_id, model_dir
+
 class Model(object):
-    def __init__(self, *, policy, ob_sace, ac_space, nbatch_act, nbatch_train,
+    def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
                 nsteps, ent_coef, vf_coef, max_grad_norm):
         sess = tf.get_default_session()
 
@@ -62,17 +65,17 @@ class Model(object):
             )[:-1]
         self.loss_names = ['policy_loss', 'value_loss', 'policy_entropy', 'approxkl', 'clipfrac']
 
-        def save(save_path):
-            ps = sess.run(params)
-            joblib.dump(ps, save_path)
-
-        def load(load_path):
-            loaded_params = joblib.load(load_path)
-            restores = []
-            for p, loaded_p in zip(params, loaded_params):
-                restores.append(p.assign(loaded_p))
-            sess.run(restores)
-            # If you want to load weights, also save/load observation scaling inside VecNormalize
+        # def save(save_path):
+        #     ps = sess.run(params)
+        #     joblib.dump(ps, save_path)
+        #
+        # def load(load_path):
+        #     loaded_params = joblib.load(load_path)
+        #     restores = []
+        #     for p, loaded_p in zip(params, loaded_params):
+        #         restores.append(p.assign(loaded_p))
+        #     sess.run(restores)
+        #     # If you want to load weights, also save/load observation scaling inside VecNormalize
 
         self.train = train
         self.train_model = train_model
@@ -80,9 +83,27 @@ class Model(object):
         self.step = act_model.step
         self.value = act_model.value
         self.initial_state = act_model.initial_state
-        self.save = save
-        self.load = load
+        # self.save = save
+        # self.load = load
+        self.global_steps = 0
+        self.saver = tf.train.Saver()
         tf.global_variables_initializer().run(session=sess) #pylint: disable=E1101
+      
+    def save(self, dir):
+      # name = self.scope
+      os.makedirs(os.path.join(dir, env_id),exist_ok=True)
+      self.saver.save(tf.get_default_session(), os.path.join(dir, env_id, 'model.ckpt'), global_step=self.global_steps)
+      print('save model successful.')
+
+    def load(self, dir):
+        # name = self.scope
+        try:
+          checkpoint = tf.train.latest_checkpoint(os.path.join(dir, env_id))
+          self.saver.restore(tf.get_default_session(), checkpoint)
+          self.global_steps = int(re.findall(r'\d+', checkpoint)[0])
+          print('load model successful.')
+        except Exception as e:
+          print('Loading model error: ', e, file=sys.stderr)
 
 class Runner(object):
 
@@ -102,6 +123,7 @@ class Runner(object):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
         mb_states = self.states
         epinfos = []
+        self.model.global_steps += self.nsteps
         for _ in range(self.nsteps):
             actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(self.obs.copy())
@@ -154,7 +176,7 @@ def constfn(val):
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             vf_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
             log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-            save_interval=0):
+            save_interval=0, load=False):
 
     if isinstance(lr, float): lr = constfn(lr)
     else: assert callable(lr)
@@ -175,7 +197,12 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         import cloudpickle
         with open(osp.join(logger.get_dir(), 'make_model.pkl'), 'wb') as fh:
             fh.write(cloudpickle.dumps(make_model))
-    model = make_model()
+    model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nbatch_act=nenvs, nbatch_train=nbatch_train,
+                    nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef,
+                    max_grad_norm=max_grad_norm)
+    
+    if load:
+        model.load(model_dir)
     runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam)
 
     epinfobuf = deque(maxlen=100)
@@ -234,12 +261,13 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                 logger.logkv(lossname, lossval)
             logger.dumpkvs()
         if save_interval and (update % save_interval == 0 or update == 1) and logger.get_dir():
-            checkdir = osp.join(logger.get_dir(), 'checkpoints')
-            os.makedirs(checkdir, exist_ok=True)
-            savepath = osp.join(checkdir, '%.5i'%update)
-            print('Saving to', savepath)
-            model.save(savepath)
+            # checkdir = osp.join(logger.get_dir(), 'checkpoints')
+            # os.makedirs(checkdir, exist_ok=True)
+            # savepath = osp.join(checkdir, '%.5i'%update)
+            print('Saving to', model_dir)
+            model.save(model_dir)
     env.close()
+    return model
 
 def safemean(xs):
     return np.nan if len(xs) == 0 else np.mean(xs)
