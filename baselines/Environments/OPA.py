@@ -6,20 +6,14 @@ import copy
 from gym import spaces
 
 from util import *
+from baselines.hyperparams import *
 from BaseEnvironment import BaseEnv
 
-SPICE_SCRIPT = 'hspice result/amp.sp'
-EPS = 1e-3
+SPICE_SCRIPT = 'hspice /home/tangcc/_march/Documents/Project/baselines/baselines/Environments/result/amp.sp'
 
-num_status = 2
-status_min = np.array([1.0, 0.65, 1.0, 0.65, 0.65] + [5e-7] * num_status)
-status_max = np.array([1.2, 0.85, 1.2, 0.85, 0.85] + [9e-4] * num_status)
 
-status_range = (status_min, status_max)
 
-params_min = np.array([6e-7] * num_status)
-params_max = np.array([2e-5] * num_status)
-params_range = (params_min, params_max)
+
 
 def get_band(string):
   try:
@@ -49,20 +43,30 @@ def call(status):
   return res
 
 
-class OPAEnv(BaseEnv):
+primary = OptElement(0, 70, threshold=30, positive=True)
 
-  def __init__(self, nb_status, nb_params, max_step, status=None, params=None, encode_factor=10, penalty_factor=1, **kwargvs):
+class OPA(BaseEnv):
+
+  def __init__(self, nb_status, nb_params, max_steps, status=None, params=None, factor=10, encode_fn=lambda x, *y: x, decode_fn=lambda x, *y: x, H=1, penalty_factor=1, **kwargvs):
     self.Gain = OptElement(0, 70, threshold=30, positive=True)
     self.Band = OptElement(8, 11, threshold=9, positive=True)
     self.Power = OptElement(-5, 2, threshold=-4.5, positive=False)
     self.penalty_factor = penalty_factor
 
-    super().__init__(nb_status, nb_params, max_step, status, params, encode_factor, **kwargvs)
-
-
+    super(OPA, self).__init__(nb_status, nb_params, max_steps, status, params, factor,encode_fn, decode_fn, H, **kwargvs)
 
   def init_status(self):
     return np.zeros(self.status_shape)
+  
+  def get_states(self, status):
+    loss, grad = self.get_loss(status)
+    return {
+      'val': [loss],
+      'grad': grad,
+      'params': self.params,
+      'status': self.status,
+    }
+  
 
   def get_opt_elements(self, string):
     # the first element is the primary optimization object
@@ -77,12 +81,43 @@ class OPAEnv(BaseEnv):
     except ValueError as e:
       print(e)
       raise ValueError(str(e))
+    
+  def gradient(self, loss, delta_loss):
+    delta = delta_loss - loss
+    grad = np.concatenate([delta[:5] / delta_bias, delta[5:]/delta_w], axis=0)
+    return grad_normalize(grad)
+  
+  def observe(self):
+    observations = []
+    for obs in obs_include:
+      v = self.observations[obs]
+      if obs == 'val':
+        v = self.loss - v
+      v = np.concatenate([
+        np.zeros((max(0, self.H - len(v)),) + sensor_dims[obs]),
+        v[-self.H:]
+      ], axis=0).flatten()
+      observations.append(v)
+  
+    for meta in meta_include:
+      observations.append(self.metas[meta].flatten())
+    return np.concatenate(observations)
 
   def get_loss(self, status):
     update_parameter('inparameter', status)
-    res = call(status)
+    call(status)
+    
+    with open('amp.ma0', 'r') as fr:
+      a = fr.read().strip().split('\n')[-nb_status - 1:]
+    
+    a = [float(re.match(r'\s*([+\-.\d]+)', line).group()) for line in a]
+    
 
-    primary, others = self.get_opt_elements(res)
+    vals = [1 - primary.normalize(l) for l in a]
+    grad = self.gradient(vals[0], np.array(vals[1:]))
+    others = None
+    
+    # primary, others = self.get_opt_elements(res)
     if others is None:
       others = ()
 
@@ -94,14 +129,14 @@ class OPAEnv(BaseEnv):
     elif len(self.penalty_factor) != len(others) + 1:
       raise ValueError('the number of penlaty factor must be equal to optElements')
 
-    loss = primary.val * self.penalty_factor[0] + sum(
+    loss = vals[0] * self.penalty_factor[0] + sum(
       [elem.penalty * pf for elem, pf in zip(others, self.penalty_factor[1:])]
     )
 
-    print('primary_val: ', primary.val * self.penalty_factor[0])
+    print('primary_val: ', vals[0] * self.penalty_factor[0])
     for elem, pf in zip(others, self.penalty_factor[1:]):
       print('other penalty: ', elem.penalty * pf)
-    return loss
+    return loss, grad
 
 
 

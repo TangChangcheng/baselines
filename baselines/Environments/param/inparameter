@@ -1,0 +1,18 @@
+.param deltaBias=1e-06 deltaW=5e-08
+.PARAM vb0=1.0 vb1=0.65 vb2=1.0 vb3=0.65 vin=0.65 wn=6.000000000000003e-07 wp1=6.000000000000003e-07 ll=1e-6
+.AC DEC 10 1K 100G
+.measure ac dcgain max PAR('db((vm(vout1)+vm(vout2))/vm(vip, 0))') 
+.alter
+.param vb0='1.0+deltaBias' vb1=0.65 vb2=1.0 vb3=0.65 vin=0.65 wn=6.000000000000003e-07 wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1='0.65+deltaBias' vb2=1.0 vb3=0.65 vin=0.65 wn=6.000000000000003e-07 wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1=0.65 vb2='1.0+deltaBias' vb3=0.65 vin=0.65 wn=6.000000000000003e-07 wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1=0.65 vb2=1.0 vb3='0.65+deltaBias' vin=0.65 wn=6.000000000000003e-07 wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1=0.65 vb2=1.0 vb3=0.65 vin='0.65+deltaBias' wn=6.000000000000003e-07 wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1=0.65 vb2=1.0 vb3=0.65 vin=0.65 wn='6.000000000000003e-07 + deltaW' wp1=6.000000000000003e-07
+.alter
+.param vb0=1.0 vb1=0.65 vb2=1.0 vb3=0.65 vin=0.65 wn=6.000000000000003e-07 wp1='6.000000000000003e-07+deltaW'

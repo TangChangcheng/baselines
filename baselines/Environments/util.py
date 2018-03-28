@@ -1,32 +1,23 @@
 import numpy as np
 import re
-EPS = 1e-3
+from baselines.hyperparams import delta_bias, delta_w, EPS,param_path
 
 
-FILE_PATH = 'param/'
+
 
 def add_penalty(f, constrain):
-  return np.max([np.zeros_like(f), f - constrain], )
-  return x * (x > 0)
-
-def transform(val):
-  return np.log10(val)
-  # return val
-
-def detransform(val):
-  return np.power(10, val)
-  # return val
+  res = f - constrain
+  return np.max([np.zeros_like(res), f - constrain], axis=0)
 
 def update_parameter(filename, params):
   filename += '{}'
-  with open(FILE_PATH + filename.format('_template'), 'r') as ft, open(FILE_PATH + filename.format(''), 'w') as fw:
+  with open(param_path + filename.format('_template'), 'r') as ft, open(param_path + filename.format(''), 'w') as fw:
     content = ft.read()
-    for i, p in enumerate(params, 1):
-      content = re.sub(r'(\${})\s'.format(i), str(p) + '\n', content)
-    if '$' in content:
-      raise ValueError('got wrong number of parameters.')
+    content = content.format(*params, delta_bias=delta_bias, delta_w=delta_w)
     fw.write(content)
 
+def grad_normalize(grad):
+  return grad
 
 class OptElement(object):
   def __init__(self, _min, _max, threshold=None, positive=False):
@@ -62,4 +53,5 @@ class OptElement(object):
     # when positive is false, penalty is added when val > T
     # when positive is true, penalty is added when -val > -T => val < T
     diff = (self.val - self.normed_threshold) / (abs(self.normed_threshold) + EPS)
-    return relu(diff)
+    diff[diff < 0] = 0
+    return diff

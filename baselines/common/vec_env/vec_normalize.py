@@ -24,6 +24,7 @@ class VecNormalize(VecEnvWrapper):
         where 'news' is a boolean vector indicating whether each element is new.
         """
         obs, rews, news, infos = self.venv.step_wait()
+        assert not str(rews).isalpha()
         self.ret = self.ret * self.gamma + rews
         obs = self._obfilt(obs)
         if self.ret_rms:

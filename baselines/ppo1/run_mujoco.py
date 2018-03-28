@@ -10,21 +10,21 @@ from baselines.bench.monitor import Monitor
 
 from baselines.hyperparams import *
 
-from baselines.ppo1 import mlp_policy, pposgd_simple
+from baselines.ppo1 import mlp_policy, pposgd_simple, cnn_policy
 import os
 
-# path = os.path.abspath(__file__).split('/')[:-2]
-# sys.path.append(os.path.join(*path, 'Environments'))
+
 EnvModule = importlib.import_module(env_id)
-# exec('from ..Environments import {module}'.format(module=env_id))
 env = getattr(EnvModule, env_id)(**env_config)
-U.make_session(num_cpu=1).__enter__()
+U.make_session(num_cpu=8).__enter__()
 def policy_fn(name, ob_space, ac_space):
   return mlp_policy.MlpPolicy(name=name, ob_space=ob_space, ac_space=ac_space,
                               **mlp_config)
+  # return cnn_policy.CnnPolicy(name=name, ob_space=ob_space, ac_space=ac_space,
+  #                             **cnn_config)
 
 def train(env, num_timesteps, seed):
-    wrapped_env = Monitor(env, 'log/convex')
+    wrapped_env = Monitor(env, 'log/{}'.format(env_id))
     pposgd_simple.learn(wrapped_env, policy_fn,
             max_timesteps=num_timesteps,
             # max_timesteps=1E5,
@@ -69,8 +69,7 @@ def test(env, epochs=5):
 def main():
     args = mujoco_arg_parser().parse_args()
     logger.configure(dir='log', format_strs=['stdout'])
-    train(env, num_timesteps=args.num_timesteps, seed=args.seed)
-    
+    train(env, num_timesteps=5e4, seed=args.seed)
 
 if __name__ == '__main__':
     main()

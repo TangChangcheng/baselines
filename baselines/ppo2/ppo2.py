@@ -136,6 +136,7 @@ class Runner(object):
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
             mb_rewards.append(rewards)
+          
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
@@ -260,12 +261,12 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             for (lossval, lossname) in zip(lossvals, model.loss_names):
                 logger.logkv(lossname, lossval)
             logger.dumpkvs()
-        if save_interval and (update % save_interval == 0 or update == 1) and logger.get_dir():
+        #if save_interval and (update % save_interval == 0 or update == 1) and logger.get_dir():
             # checkdir = osp.join(logger.get_dir(), 'checkpoints')
             # os.makedirs(checkdir, exist_ok=True)
             # savepath = osp.join(checkdir, '%.5i'%update)
-            print('Saving to', model_dir)
-            model.save(model_dir)
+            #print('Saving to', model_dir)
+            #model.save(model_dir)
     env.close()
     return model
 

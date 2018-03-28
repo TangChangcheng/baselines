@@ -178,9 +178,10 @@ class DiagGaussianPd(Pd):
     def __init__(self, flat):
         self.flat = flat
         mean, logstd = tf.split(axis=len(flat.shape)-1, num_or_size_splits=2, value=flat)
-        self.mean = mean
-        self.logstd = logstd
-        self.std = tf.exp(logstd)
+        dim = tf.reduce_prod(tf.shape(mean)[1:])
+        self.mean = tf.reshape(mean, [-1, dim])
+        self.logstd = tf.reshape(logstd, [-1, dim])
+        self.std = tf.exp(self.logstd)
     def flatparam(self):
         return self.flat
     def mode(self):
@@ -232,6 +233,8 @@ def make_pdtype(ac_space):
         return MultiCategoricalPdType(ac_space.nvec)
     elif isinstance(ac_space, spaces.MultiBinary):
         return BernoulliPdType(ac_space.n)
+    elif isinstance(ac_space, int):
+        return DiagGaussianPdType(ac_space)
     else:
         raise NotImplementedError
 

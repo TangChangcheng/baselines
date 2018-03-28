@@ -74,7 +74,7 @@ def main():
     import argparse
     import os
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--dirs', help='List of log directories', nargs = '*', default=['./log'])
+    parser.add_argument('--dirs', help='List of log directories', nargs = '*', default=['ppo1/log'])
     parser.add_argument('--num_timesteps', type=int, default=int(10e6))
     parser.add_argument('--xaxis', help = 'Varible on X-axis', default = X_TIMESTEPS)
     parser.add_argument('--task_name', help = 'Title of plot', default = 'Breakout')

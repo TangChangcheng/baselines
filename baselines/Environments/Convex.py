@@ -3,17 +3,14 @@ from copy import deepcopy
 from gym.core import Env
 from baselines.hyperparams import *
 
+import functools
+
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
 
-interval = 0.05
-status = np.arange(-3, 3, interval)
-actions = np.arange(-6, 6, interval)
-
-
 class Convex(Env):
     id = 'Convex'
-    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10, params_mean=0, params_std=1, status_mean=0, status_std=1.):
+    def __init__(self, nb_status=8, max_steps=10, params=None, status=None, H=10, params_mean=0, params_std=1, status_mean=0, status_std=1., **kwargs):
         super(Convex, self).__init__()
         
         self.action_shape = (nb_status, )
@@ -33,13 +30,6 @@ class Convex(Env):
         self._seed = 0
 
         self.reward = 0
-        self.last_reward = 0
-        self.nb_plot = 0
-        self.is_training = True
-        self.is_ploting = False
-        self.plt = plt
-        self.plot_row = 1
-        self.plot_col = 1
 
         self.max_steps = max_steps
         self.reward_range = (-np.inf, 0)
@@ -50,24 +40,22 @@ class Convex(Env):
             self.coefs = np.array(params[0])
             self.bias = np.array(params[1])
             self.is_params_setted = True
-
-        shape_status = nb_status
-        shape_past_val = H
-        shape_past_grad = H * nb_status
-        shape_w = self.coefs.flatten().shape[0]
-        shape_bias = self.bias.shape[0]
         
-        if obs == 'grad':
-            shapes = [shape_past_grad]
-        elif obs == 'grad_val':
-            shapes = [shape_past_grad, shape_past_val]
-        else:
-            shapes = [shape_status]
+        reduce_mul = lambda seq: functools.reduce(lambda x, y: x * y, seq)
         
-        if observe_params:
-            shapes.extend([shape_w, shape_bias])
+        obs_shape = [(H, ) + sensor_dims[obs] for obs in obs_include]
+        meta_shape = [sensor_dims[meta] for meta in meta_include]
 
-        self.observation_space = spaces.Box(-10, 10, shape=(sum(shapes), ))
+        self.observation_space = spaces.Box(-10, 10,shape=(sum([reduce_mul(tup) for tup in obs_shape + meta_shape]), ))
+        
+        self.observations = {
+          obs: np.zeros((0, ) + sensor_dims[obs])
+          for obs in obs_include
+        }
+        self.metas = {
+          meta: np.zeros_like(sensor_dims[meta])
+          for meta in meta_include
+        }
 
         if status is None:
             self.is_status_setted = False
@@ -77,7 +65,24 @@ class Convex(Env):
             self.is_status_setted = True
 
         self.reset()
-
+      
+    def get_states(self, status):
+      return {
+        'grad': self.gradient(status),
+        'val': [self.foo(status)],
+        'params': self. coefs,
+        'bias': self.bias,
+      }
+    
+    def set_observations(self, states):
+      for obs in obs_include:
+        self.observations[obs] = np.append(self.observations[obs], [states[obs]], axis=0)
+    
+    def set_metas(self, states):
+      for meta in meta_include:
+        self.metas[meta] = states[meta]
+    
+    
     def foo(self, x):
         coefs = self.coefs
         y = np.sum(np.power(np.matmul(coefs, x) - self.bias, 2))
@@ -109,59 +114,37 @@ class Convex(Env):
             self.coefs = random_fn(self.params_mean, self.params_std, size=np.shape(self.coefs))
             self.bias = random_fn(self.params_mean, self.params_std, size=np.shape(self.bias))
         self.init_status = deepcopy(self.status)
-        self.loss = np.sum(self.foo(self.status))
-        self.init_loss = deepcopy(self.loss)
+        states = self.get_states(self.status)
+        self.set_observations(states)
+        self.set_metas(states)
+        
         self.nb_step = 0
 
-        self.losses = [self.init_loss]
-
-        self.history_observation = {
-            'val': [self.init_loss],
-            'gradient': [[0] * self.action_shape[0]] * self.H
-        }
-
-        self.history_observation['gradient'][-1] = self.gradient(self.status)
-        
-        self.info = {'vtrue': []}
+        self.init_loss = states['val'][0]
+        self.loss = self.init_loss
+        self.info = {'vtrue': [self.init_loss]}
 
         # print('init_loss = ', self.loss)
-        return self.observe(self.loss)
+        return self.observe()
 
     def seed(self, _int):
         np.random.seed(_int)
 
-    def observe(self, current_loss):
-        # return np.concatenate([np.array(self.status), self.coefs.flatten(), self.bias])
-        res = []
-        if obs == 'grad':
-            res.append(self.observe_grad(current_loss))
-        elif obs == 'grad_val':
-            res.extend([self.observe_val(current_loss), self.observe_grad(current_loss)])
-        else:
-            res.append(self.status)
+    def observe(self):
+        observations = []
+        for obs in obs_include:
+          v = self.observations[obs]
+          if obs == 'val':
+            v = self.loss - v
+          v = np.concatenate([
+                              np.zeros((max(0, self.H - len(v)), ) + sensor_dims[obs]),
+                              v[-self.H:]
+                             ], axis=0).flatten()
+          observations.append(v)
         
-        if observe_params:
-            res.extend([self.coefs.flatten(), self.bias])
-        
-        return np.concatenate(res)
-    
-    
-    def observe_grad(self, current_loss=None):
-        return np.array(self.history_observation['gradient']).flatten()
-
-    def observe_val(self, current_loss):
-        if len(self.history_observation['val']) < self.H:
-            self.history_observation['val'] = [0] * (self.H - len(self.history_observation['val'])) + \
-                                              [current_loss - k for k in self.history_observation['val']]
-        else:
-            self.history_observation['val'] = self.history_observation['val'][-self.H:]
-        return np.array(self.history_observation['val'])
-
-
-    def observe3(self, current_loss):
-        return np.concatenate([np.array(self.history_observation['gradient']).flatten(),
-                              self.coefs.flatten(),
-                              self.bias])
+        for meta in meta_include:
+          observations.append(self.metas[meta].flatten())
+        return np.concatenate(observations)
 
 
     def step(self, action):
@@ -177,31 +160,19 @@ class Convex(Env):
         # print(self.status, action)
         self.nb_step += 1
 
-        # action[action < self.action_space.low] = self.action_space.low[action < self.action_space.low]
-        # action[action > self.action_space.high] = self.action_space.low[action > self.action_space.high]
-
-
         self.status += action
-
         self.action = action
-        tmp = self.foo(self.status)
-        # self.history_observation['val'].pop(0)
-        self.history_observation['val'].append(tmp)
-        grad = self.gradient(self.status)
-        self.history_observation['gradient'].pop(0)
-        self.history_observation['gradient'].append(grad)
+        states = self.get_states(self.status)
+        tmp = float(states['val'][0])
 
-        observation = self.observe(tmp)
         self.last_reward = self.reward
-        # self.reward = self.loss - tmp
         self.reward = -tmp
         self.loss = tmp
+        
+        self.set_observations(states)
+        observation = self.observe()
 
-        if self.is_training:
-            # done = np.any(action <= self.action_space.low) or np.any(action >= self.action_space.high) or self.loss > 1000 or self.nb_step > self.max_steps
-            done = self.nb_step >= self.max_steps
-        else:
-            done = self.loss > 1000 or self.nb_step >= self.max_steps
+        done = self.nb_step >= self.max_steps
         
         self.info['vtrue'].append(self.loss)
         
@@ -229,3 +200,6 @@ class Convex(Env):
 
     def solution(self):
         return -self.coefs[1]/self.coefs[0]/2.0
+
+y = -20 * np.exp(-0.2 * np.sqrt(np.sum(np.power(np.matmul(coef, x), 2), axis=-1))) - np.exp(
+            np.sum(np.cos(2 * np.pi * (np.matmul(coef, x))) * coef[2], axis=-1)) + 20 + np.e

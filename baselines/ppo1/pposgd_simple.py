@@ -11,7 +11,7 @@ from baselines.hyperparams import *
 
 def traj_segment_generator(pi, env, horizon, stochastic):
     t = 0
-    ac = env.action_space.sample() # not used, just so we have the datatype
+    ac = env.actions # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
     ob = env.reset()
 
@@ -31,7 +31,8 @@ def traj_segment_generator(pi, env, horizon, stochastic):
 
     while True:
         prevac = ac
-        ac, vpred = pi.act(stochastic, ob)
+        _ac, vpred = pi.act(stochastic, ob)
+        ac = _ac.reshape(ac.shape)
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
@@ -145,78 +146,88 @@ def learn(env, policy_fn, *,
 
     assert sum([max_iters>0, max_timesteps>0, max_episodes>0, max_seconds>0])==1, "Only one time constraint permitted"
 
-    while True:
-        if callback: callback(locals(), globals())
-        if max_timesteps and timesteps_so_far >= max_timesteps:
-            break
-        elif max_episodes and episodes_so_far >= max_episodes:
-            break
-        elif max_iters and iters_so_far >= max_iters:
-            break
-        elif max_seconds and time.time() - tstart >= max_seconds:
-            break
-
-        if schedule == 'constant':
-            cur_lrmult = 1.0
-        elif schedule == 'linear':
-            cur_lrmult =  max(1.0 - float(timesteps_so_far) / max_timesteps, 0)
-        else:
-            raise NotImplementedError
-
-        logger.log("********** Iteration %i ************"%iters_so_far)
-
-        seg = seg_gen.__next__()
-        add_vtarg_and_adv(seg, gamma, lam)
-
-        # ob, ac, atarg, ret, td1ret = map(np.concatenate, (obs, acs, atargs, rets, td1rets))
-        ob, ac, atarg, tdlamret = seg["ob"], seg["ac"], seg["adv"], seg["tdlamret"]
-        vpredbefore = seg["vpred"] # predicted value function before udpate
-        atarg = (atarg - atarg.mean()) / atarg.std() # standardized advantage function estimate
-        d = Dataset(dict(ob=ob, ac=ac, atarg=atarg, vtarg=tdlamret), shuffle=not pi.recurrent)
-        optim_batchsize = optim_batchsize or ob.shape[0]
-
-        if hasattr(pi, "ob_rms"): pi.ob_rms.update(ob) # update running mean/std for policy
-
-        assign_old_eq_new() # set old parameter values to new parameter values
-        logger.log("Optimizing...")
-        logger.log(fmt_row(13, loss_names))
-        # Here we do a bunch of optimization epochs over the data
-        for _ in range(optim_epochs):
-            losses = [] # list of tuples, each of which gives the loss for a minibatch
+    try:
+        while True:
+            if callback: callback(locals(), globals())
+            if max_timesteps and timesteps_so_far >= max_timesteps:
+                break
+            elif max_episodes and episodes_so_far >= max_episodes:
+                break
+            elif max_iters and iters_so_far >= max_iters:
+                break
+            elif max_seconds and time.time() - tstart >= max_seconds:
+                break
+    
+            if schedule == 'constant':
+                cur_lrmult = 1.0
+            elif schedule == 'linear':
+                cur_lrmult =  max(1.0 - float(timesteps_so_far) / max_timesteps, 0)
+            else:
+                raise NotImplementedError
+    
+            logger.log("********** Iteration %i ************"%iters_so_far)
+            
+            oldpi.step = timesteps_so_far
+            pi.step = timesteps_so_far
+    
+            seg = seg_gen.__next__()
+            add_vtarg_and_adv(seg, gamma, lam)
+    
+            # ob, ac, atarg, ret, td1ret = map(np.concatenate, (obs, acs, atargs, rets, td1rets))
+            ob, ac, atarg, tdlamret = seg["ob"], seg["ac"], seg["adv"], seg["tdlamret"]
+            vpredbefore = seg["vpred"] # predicted value function before udpate
+            atarg = (atarg - atarg.mean()) / atarg.std() # standardized advantage function estimate
+            d = Dataset(dict(ob=ob, ac=ac, atarg=atarg, vtarg=tdlamret), shuffle=not pi.recurrent)
+            optim_batchsize = optim_batchsize or ob.shape[0]
+    
+            if hasattr(pi, "ob_rms"): pi.ob_rms.update(ob) # update running mean/std for policy
+    
+            assign_old_eq_new() # set old parameter values to new parameter values
+            logger.log("Optimizing...")
+            logger.log(fmt_row(13, loss_names))
+            # Here we do a bunch of optimization epochs over the data
+            for _ in range(optim_epochs):
+                losses = [] # list of tuples, each of which gives the loss for a minibatch
+                for batch in d.iterate_once(optim_batchsize):
+    
+                    *newlosses, g = lossandgrad(batch["ob"], batch["ac"].reshape([optim_batchsize, -1]), batch["atarg"],
+                                                batch["vtarg"].reshape([optim_batchsize,]), cur_lrmult)
+                    adam.update(g, optim_stepsize * cur_lrmult)
+                    losses.append(newlosses)
+                logger.log(fmt_row(13, np.mean(losses, axis=0)))
+    
+            logger.log("Evaluating losses...")
+            losses = []
             for batch in d.iterate_once(optim_batchsize):
-                *newlosses, g = lossandgrad(batch["ob"], batch["ac"], batch["atarg"], batch["vtarg"], cur_lrmult)
-                adam.update(g, optim_stepsize * cur_lrmult)
+                newlosses = compute_losses(batch["ob"], batch["ac"].reshape([optim_batchsize, -1]), batch["atarg"], batch["vtarg"], cur_lrmult)
                 losses.append(newlosses)
-            logger.log(fmt_row(13, np.mean(losses, axis=0)))
-
-        logger.log("Evaluating losses...")
-        losses = []
-        for batch in d.iterate_once(optim_batchsize):
-            newlosses = compute_losses(batch["ob"], batch["ac"], batch["atarg"], batch["vtarg"], cur_lrmult)
-            losses.append(newlosses)
-        meanlosses,_,_ = mpi_moments(losses, axis=0)
-        logger.log(fmt_row(13, meanlosses))
-        for (lossval, name) in zipsame(meanlosses, loss_names):
-            logger.record_tabular("loss_"+name, lossval)
-        logger.record_tabular("ev_tdlam_before", explained_variance(vpredbefore, tdlamret))
-        lrlocal = (seg["ep_lens"], seg["ep_rets"]) # local values
-        listoflrpairs = MPI.COMM_WORLD.allgather(lrlocal) # list of tuples
-        lens, rews = map(flatten_lists, zip(*listoflrpairs))
-        lenbuffer.extend(lens)
-        rewbuffer.extend(rews)
-        logger.record_tabular("EpLenMean", np.mean(lenbuffer))
-        logger.record_tabular("EpRewMean", np.mean(rewbuffer))
-        logger.record_tabular("EpThisIter", len(lens))
-        episodes_so_far += len(lens)
-        timesteps_so_far += sum(lens)
-        iters_so_far += 1
-        logger.record_tabular("EpisodesSoFar", episodes_so_far)
-        logger.record_tabular("TimestepsSoFar", timesteps_so_far)
-        logger.record_tabular("TimeElapsed", time.time() - tstart)
-        if MPI.COMM_WORLD.Get_rank()==0:
-            logger.dump_tabular()
+            meanlosses,_,_ = mpi_moments(losses, axis=0)
+            logger.log(fmt_row(13, meanlosses))
+            for (lossval, name) in zipsame(meanlosses, loss_names):
+                logger.record_tabular("loss_"+name, lossval)
+            logger.record_tabular("ev_tdlam_before", explained_variance(vpredbefore, tdlamret))
+            lrlocal = (seg["ep_lens"], seg["ep_rets"]) # local values
+            listoflrpairs = MPI.COMM_WORLD.allgather(lrlocal) # list of tuples
+            lens, rews = map(flatten_lists, zip(*listoflrpairs))
+            lenbuffer.extend(lens)
+            rewbuffer.extend(rews)
+            logger.record_tabular("EpLenMean", np.mean(lenbuffer))
+            logger.record_tabular("EpRewMean", np.mean(rewbuffer))
+            logger.record_tabular("EpThisIter", len(lens))
+            episodes_so_far += len(lens)
+            timesteps_so_far += sum(lens)
+            iters_so_far += 1
+            logger.record_tabular("EpisodesSoFar", episodes_so_far)
+            logger.record_tabular("TimestepsSoFar", timesteps_so_far)
+            logger.record_tabular("TimeElapsed", time.time() - tstart)
+            if MPI.COMM_WORLD.Get_rank()==0:
+                logger.dump_tabular()
+    except KeyError:
+        pass
+    
     pi.save(model_dir)
     oldpi.save(model_dir)
+    
 
 def flatten_lists(listoflists):
     return [el for list_ in listoflists for el in list_]
